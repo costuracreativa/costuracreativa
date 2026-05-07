@@ -303,10 +303,13 @@
             if (key >= '0' && key <= '9') {
                 calc.number(key);
             } else if (key === '+') {
+                event.preventDefault();
                 calc.operator('+');
             } else if (key === '-') {
+                event.preventDefault();
                 calc.operator('-');
             } else if (key === '*') {
+                event.preventDefault();
                 calc.operator('*');
             } else if (key === '/' || key === 'Divide') {
                 event.preventDefault();
