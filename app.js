@@ -487,7 +487,7 @@ function renderPublicCourses() {
                     <span class="course-tag">${course.tag}</span>
                     <h3>${course.title}</h3>
                     <p>${course.desc}</p>
-                    <div class="course-meta">
+                    <div class="course-meta" style="margin-bottom: 1.5rem;">
                         <div class="meta-item">
                             <i data-lucide="play-circle"></i>
                             <span>${course.lessonsCount} Lecciones</span>
@@ -497,6 +497,9 @@ function renderPublicCourses() {
                             <span>${course.duration}</span>
                         </div>
                     </div>
+                    <button class="btn-primary btn-full btn-buy-course" data-id="${course.id}" data-title="${course.title}">
+                        Inscribirse <i data-lucide="shopping-bag"></i>
+                    </button>
                 </div>
             </div>
         `;
@@ -991,4 +994,123 @@ function setupEventListeners() {
         renderAdminPanel();
         renderPublicCourses();
     });
+
+    // ==========================================
+    // 7. COMPRAR / REGISTRO MODAL LISTENERS
+    // ==========================================
+    const modalPurchase = document.getElementById("modal-purchase");
+    const btnCloseModal = document.getElementById("btn-close-modal");
+    
+    if (btnCloseModal) {
+        btnCloseModal.addEventListener("click", (e) => {
+            e.preventDefault();
+            modalPurchase.style.display = "none";
+        });
+    }
+
+    // Delegación de clics en "Inscribirse" del catálogo
+    const publicCoursesGrid = document.getElementById("public-courses-grid");
+    if (publicCoursesGrid) {
+        publicCoursesGrid.addEventListener("click", (e) => {
+            const btn = e.target.closest(".btn-buy-course");
+            if (btn) {
+                const courseId = btn.getAttribute("data-id");
+                const courseTitle = btn.getAttribute("data-title");
+                
+                document.getElementById("purchase-course-id").value = courseId;
+                document.getElementById("modal-course-title").textContent = courseTitle;
+                
+                modalPurchase.style.display = "flex";
+            }
+        });
+    }
+
+    // Enviar formulario de compra/registro
+    const formPurchase = document.getElementById("form-purchase");
+    if (formPurchase) {
+        formPurchase.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const courseId = document.getElementById("purchase-course-id").value;
+            const name = document.getElementById("purchase-name").value.trim();
+            const email = document.getElementById("purchase-email").value.trim();
+            const username = document.getElementById("purchase-username").value.trim().toLowerCase();
+            const password = document.getElementById("purchase-password").value.trim();
+            const btnSubmit = document.getElementById("btn-submit-purchase");
+
+            // Validar que el usuario no exista
+            const users = state.getUsers();
+            if (users.some(u => u.username.toLowerCase() === username)) {
+                alert("Este nombre de usuario ya está registrado. Por favor elige otro.");
+                return;
+            }
+
+            btnSubmit.disabled = true;
+            btnSubmit.innerHTML = `Procesando... <i data-lucide="loader" class="animate-spin" style="width:16px; height:16px; display:inline-block; vertical-align:middle;"></i>`;
+            lucide.createIcons();
+
+            const MAKE_WEBHOOK_URL = "https://hook.us2.make.com/5tlsj36tj7wyatba344jv9v1g5bpxevd";
+
+            const purchaseData = {
+                courseId: courseId,
+                displayName: name,
+                email: email,
+                username: username,
+                password: password
+            };
+
+            if (MAKE_WEBHOOK_URL.includes("TU_WEBHOOK_ID_AQUÍ")) {
+                // Modo simulador
+                alert("⚙️ Modo Simulación Activo:\n\nComo no has configurado la URL real del Webhook de Make.com, simularemos un pago exitoso por ti. El sistema creará tu cuenta en la base de datos inmediatamente.");
+                
+                const newUser = {
+                    id: "usr-" + Date.now(),
+                    displayName: name,
+                    username: username,
+                    password: password,
+                    isAdmin: false,
+                    allowedCourses: [courseId]
+                };
+                
+                await state.saveUserSingle(newUser);
+                
+                alert(`¡Pago simulado con éxito! Tu usuario "${username}" ha sido activado para este curso.`);
+                modalPurchase.style.display = "none";
+                formPurchase.reset();
+                
+                // Login automático del alumno
+                state.currentUser = newUser;
+                sessionStorage.setItem("currentUser", JSON.stringify(newUser));
+                updateNavbarState();
+                switchView("portal");
+            } else {
+                try {
+                    const response = await fetch(MAKE_WEBHOOK_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(purchaseData)
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.checkoutUrl) {
+                            // Redirigir a Mercado Pago
+                            window.location.href = result.checkoutUrl;
+                        } else {
+                            alert("Error: Make.com no devolvió el link de pago (checkoutUrl).");
+                        }
+                    } else {
+                        alert("Error del servidor de pagos de Make.com.");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Error de conexión al procesar la compra.");
+                } finally {
+                    btnSubmit.disabled = false;
+                    btnSubmit.innerHTML = `Ir a Pagar <i data-lucide="credit-card"></i>`;
+                    lucide.createIcons();
+                }
+            }
+        });
+    }
 }
