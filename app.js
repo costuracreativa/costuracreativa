@@ -379,6 +379,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupEventListeners();
     refreshAdminChecklist();
     
+    // 4. Verificar retorno de pago de Mercado Pago
+    await checkPaymentReturn();
+    
     // Check session
     const savedUser = sessionStorage.getItem("currentUser");
     if (savedUser) {
@@ -1085,6 +1088,17 @@ function setupEventListeners() {
                 switchView("portal");
             } else {
                 try {
+                    // Crear el usuario pre-inscripto con acceso bloqueado (allowedCourses vacío)
+                    const newUser = {
+                        id: "usr-" + Date.now(),
+                        displayName: name,
+                        username: username,
+                        password: password,
+                        isAdmin: false,
+                        allowedCourses: [] // Bloqueado hasta recibir confirmación de pago
+                    };
+                    await state.saveUserSingle(newUser);
+
                     const response = await fetch(MAKE_WEBHOOK_URL, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -1097,9 +1111,12 @@ function setupEventListeners() {
                             // Redirigir a Mercado Pago
                             window.location.href = result.checkoutUrl;
                         } else {
+                            // Borrar pre-inscripción si hay error en el link
+                            await state.deleteUserSingle(newUser.id);
                             alert("Error: Make.com no devolvió el link de pago (checkoutUrl).");
                         }
                     } else {
+                        await state.deleteUserSingle(newUser.id);
                         alert("Error del servidor de pagos de Make.com.");
                     }
                 } catch (err) {
@@ -1112,5 +1129,45 @@ function setupEventListeners() {
                 }
             }
         });
+    }
+}
+
+// ==========================================
+// 8. AUTOPAYMENT VALIDATION ON REDIRECT (Retorno de Mercado Pago)
+// ==========================================
+async function checkPaymentReturn() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const status = urlParams.get("status") || urlParams.get("collection_status");
+    const externalRef = urlParams.get("external_reference");
+
+    if ((status === "approved" || status === "success") && externalRef) {
+        // Formato externalRef: username|password|displayName|courseId o username|courseId
+        const parts = decodeURIComponent(externalRef).split("|");
+        if (parts.length >= 2) {
+            const username = parts[0].toLowerCase().trim();
+            const courseId = parts[3] ? parts[3].trim() : parts[1].trim();
+
+            let users = state.getUsers();
+            const user = users.find(u => u.username.toLowerCase() === username);
+
+            if (user) {
+                if (!user.allowedCourses.includes(courseId)) {
+                    user.allowedCourses.push(courseId);
+                    await state.saveUserSingle(user);
+                }
+
+                alert(`¡Inscripción Exitosa!\n\nHola ${user.displayName}, tu pago fue aprobado con éxito y el acceso al curso ha sido activado de inmediato. ¡Bienvenido/a!`);
+                
+                // Login automático
+                state.currentUser = user;
+                sessionStorage.setItem("currentUser", JSON.stringify(user));
+                updateNavbarState();
+                switchView("portal");
+
+                // Limpiar la URL de los parámetros para que no repita el proceso al recargar
+                const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+            }
+        }
     }
 }
