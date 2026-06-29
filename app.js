@@ -1071,6 +1071,7 @@ function setupEventListeners() {
                     displayName: name,
                     username: username,
                     password: password,
+                    email: email,
                     isAdmin: false,
                     allowedCourses: [courseId]
                 };
@@ -1094,6 +1095,7 @@ function setupEventListeners() {
                         displayName: name,
                         username: username,
                         password: password,
+                        email: email,
                         isAdmin: false,
                         allowedCourses: [] // Bloqueado hasta recibir confirmación de pago
                     };
@@ -1127,6 +1129,54 @@ function setupEventListeners() {
                     btnSubmit.innerHTML = `Ir a Pagar <i data-lucide="credit-card"></i>`;
                     lucide.createIcons();
                 }
+            }
+        });
+    }
+
+    // Google Sign-In Listener
+    const btnGoogle = document.getElementById("btn-login-google");
+    if (btnGoogle) {
+        btnGoogle.addEventListener("click", async () => {
+            if (!state.isFirebaseEnabled) {
+                alert("La autenticación con Google requiere que Firebase esté activo y configurado. Por favor, completa la configuración de Firebase en app.js y activa Google Sign-In en tu consola Firebase.");
+                return;
+            }
+
+            try {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                const result = await firebase.auth().signInWithPopup(provider);
+                const user = result.user;
+                const email = user.email.toLowerCase();
+
+                // Buscar usuario en Firebase por email
+                const users = state.getUsers();
+                let foundUser = users.find(u => u.email && u.email.toLowerCase() === email);
+
+                if (!foundUser) {
+                    // Si no existe el usuario (es la primera vez que se loguea), creamos su cuenta de alumno básica vacía
+                    foundUser = {
+                        id: "usr-" + Date.now(),
+                        displayName: user.displayName || "Alumno de Costura",
+                        username: email.split("@")[0] + "_g",
+                        password: "google_account_no_password",
+                        email: email,
+                        isAdmin: false,
+                        allowedCourses: [] // Vacío inicialmente, debe adquirir cursos
+                    };
+                    await state.saveUserSingle(foundUser);
+                }
+
+                alert(`¡Sesión iniciada correctamente!\n\nBienvenido/a, ${foundUser.displayName}`);
+                state.currentUser = foundUser;
+                sessionStorage.setItem("currentUser", JSON.stringify(foundUser));
+                updateNavbarState();
+                
+                // Redirigir al portal del alumno
+                switchView("portal");
+
+            } catch (error) {
+                console.error("Error al iniciar sesión con Google:", error);
+                alert("Error al iniciar sesión con Google: " + error.message + "\n\n(Asegúrate de haber activado el proveedor Google en la consola de Firebase -> Authentication -> Sign-in method).");
             }
         });
     }
