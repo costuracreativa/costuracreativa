@@ -1028,79 +1028,78 @@ function setupEventListeners() {
         });
     }
 
-    // Enviar formulario de compra/registro
-    const formPurchase = document.getElementById("form-purchase");
-    if (formPurchase) {
-        formPurchase.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            
+    // Enviar formulario de compra/registro mediante Google
+    const btnPurchaseGoogle = document.getElementById("btn-purchase-google");
+    if (btnPurchaseGoogle) {
+        btnPurchaseGoogle.addEventListener("click", async () => {
             const courseId = document.getElementById("purchase-course-id").value;
-            const name = document.getElementById("purchase-name").value.trim();
-            const email = document.getElementById("purchase-email").value.trim();
-            const username = document.getElementById("purchase-username").value.trim().toLowerCase();
-            const password = document.getElementById("purchase-password").value.trim();
-            const btnSubmit = document.getElementById("btn-submit-purchase");
+            const loadingMsg = document.getElementById("purchase-loading-msg");
 
-            // Validar que el usuario no exista
-            const users = state.getUsers();
-            if (users.some(u => u.username.toLowerCase() === username)) {
-                alert("Este nombre de usuario ya está registrado. Por favor elige otro.");
+            if (!state.isFirebaseEnabled) {
+                alert("La autenticación con Google requiere que Firebase esté activo y configurado. Por favor, completa la configuración de Firebase en app.js y activa Google Sign-In en tu consola Firebase.");
                 return;
             }
 
-            btnSubmit.disabled = true;
-            btnSubmit.innerHTML = `Procesando... <i data-lucide="loader" class="animate-spin" style="width:16px; height:16px; display:inline-block; vertical-align:middle;"></i>`;
-            lucide.createIcons();
+            try {
+                // 1. Autenticar con Google
+                const provider = new firebase.auth.GoogleAuthProvider();
+                const result = await firebase.auth().signInWithPopup(provider);
+                const user = result.user;
+                const email = user.email.toLowerCase();
+                const displayName = user.displayName || "Alumno de Costura";
+                const username = email.split("@")[0] + "_g";
 
-            const MAKE_WEBHOOK_URL = "https://hook.us2.make.com/5tlsj36tj7wyatba344jv9v1g5bpxevd";
+                // Ocultar botón y mostrar spinner de carga
+                btnPurchaseGoogle.style.display = "none";
+                loadingMsg.style.display = "block";
 
-            const purchaseData = {
-                courseId: courseId,
-                displayName: name,
-                email: email,
-                username: username,
-                password: password
-            };
+                // 2. Buscar si ya existe el usuario
+                const users = state.getUsers();
+                let foundUser = users.find(u => u.email && u.email.toLowerCase() === email);
 
-            if (MAKE_WEBHOOK_URL.includes("TU_WEBHOOK_ID_AQUÍ")) {
-                // Modo simulador
-                alert("⚙️ Modo Simulación Activo:\n\nComo no has configurado la URL real del Webhook de Make.com, simularemos un pago exitoso por ti. El sistema creará tu cuenta en la base de datos inmediatamente.");
-                
-                const newUser = {
-                    id: "usr-" + Date.now(),
-                    displayName: name,
-                    username: username,
-                    password: password,
-                    email: email,
-                    isAdmin: false,
-                    allowedCourses: [courseId]
-                };
-                
-                await state.saveUserSingle(newUser);
-                
-                alert(`¡Pago simulado con éxito! Tu usuario "${username}" ha sido activado para este curso.`);
-                modalPurchase.style.display = "none";
-                formPurchase.reset();
-                
-                // Login automático del alumno
-                state.currentUser = newUser;
-                sessionStorage.setItem("currentUser", JSON.stringify(newUser));
-                updateNavbarState();
-                switchView("portal");
-            } else {
-                try {
-                    // Crear el usuario pre-inscripto con acceso bloqueado (allowedCourses vacío)
-                    const newUser = {
+                if (!foundUser) {
+                    // Si no existe, crear pre-inscripto (bloqueado)
+                    foundUser = {
                         id: "usr-" + Date.now(),
-                        displayName: name,
+                        displayName: displayName,
                         username: username,
-                        password: password,
+                        password: "google_account_no_password",
                         email: email,
                         isAdmin: false,
-                        allowedCourses: [] // Bloqueado hasta recibir confirmación de pago
+                        allowedCourses: [] // Bloqueado inicialmente
                     };
-                    await state.saveUserSingle(newUser);
+                    await state.saveUserSingle(foundUser);
+                }
 
+                // 3. Preparar webhook de Make
+                const MAKE_WEBHOOK_URL = "https://hook.us2.make.com/5tlsj36tj7wyatba344jv9v1g5bpxevd";
+                const purchaseData = {
+                    courseId: courseId,
+                    displayName: displayName,
+                    email: email,
+                    username: username,
+                    password: "google_account_no_password"
+                };
+
+                if (MAKE_WEBHOOK_URL.includes("TU_WEBHOOK_ID_AQUÍ")) {
+                    // Modo simulador
+                    alert("⚙️ Modo Simulación Activo:\n\nComo no has configurado la URL real del Webhook de Make.com, simularemos un pago exitoso por ti. El sistema activará tu cuenta de inmediato.");
+                    
+                    if (!foundUser.allowedCourses.includes(courseId)) {
+                        foundUser.allowedCourses.push(courseId);
+                        await state.saveUserSingle(foundUser);
+                    }
+                    
+                    alert(`¡Inscripción simulada con éxito! Tu usuario de Google "${email}" ahora tiene acceso a este curso.`);
+                    modalPurchase.style.display = "none";
+                    
+                    // Login automático del alumno
+                    state.currentUser = foundUser;
+                    sessionStorage.setItem("currentUser", JSON.stringify(foundUser));
+                    updateNavbarState();
+                    switchView("portal");
+                } else {
+                    // Realizar petición a Make
                     const response = await fetch(MAKE_WEBHOOK_URL, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -1113,22 +1112,18 @@ function setupEventListeners() {
                             // Redirigir a Mercado Pago
                             window.location.href = result.checkoutUrl;
                         } else {
-                            // Borrar pre-inscripción si hay error en el link
-                            await state.deleteUserSingle(newUser.id);
                             alert("Error: Make.com no devolvió el link de pago (checkoutUrl).");
                         }
                     } else {
-                        await state.deleteUserSingle(newUser.id);
                         alert("Error del servidor de pagos de Make.com.");
                     }
-                } catch (err) {
-                    console.error(err);
-                    alert("Error de conexión al procesar la compra.");
-                } finally {
-                    btnSubmit.disabled = false;
-                    btnSubmit.innerHTML = `Ir a Pagar <i data-lucide="credit-card"></i>`;
-                    lucide.createIcons();
                 }
+            } catch (error) {
+                console.error("Error al iniciar sesión con Google para compra:", error);
+                alert("Error al iniciar la inscripción con Google: " + error.message);
+            } finally {
+                btnPurchaseGoogle.style.display = "flex";
+                loadingMsg.style.display = "none";
             }
         });
     }
