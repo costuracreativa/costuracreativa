@@ -1071,7 +1071,7 @@ function setupEventListeners() {
     // Delegación de clics en "Inscribirse" del catálogo
     const publicCoursesGrid = document.getElementById("public-courses-grid");
     if (publicCoursesGrid) {
-        publicCoursesGrid.addEventListener("click", (e) => {
+        publicCoursesGrid.addEventListener("click", async (e) => {
             const btn = e.target.closest(".btn-buy-course");
             if (btn) {
                 const courseId = btn.getAttribute("data-id");
@@ -1080,7 +1080,19 @@ function setupEventListeners() {
                 document.getElementById("purchase-course-id").value = courseId;
                 document.getElementById("modal-course-title").textContent = courseTitle;
                 
-                modalPurchase.style.display = "flex";
+                // Si el alumno ya está logueado en la plataforma
+                if (state.currentUser) {
+                    if (state.currentUser.allowedCourses.includes(courseId)) {
+                        alert("Ya estás inscrito en este curso. Ve a tu Portal para acceder.");
+                        return;
+                    }
+                    
+                    if (confirm(`Estás logueado como ${state.currentUser.displayName} (${state.currentUser.email || state.currentUser.username}).\n\n¿Quieres proceder al pago del curso "${courseTitle}"?`)) {
+                        await handleDirectPurchase(state.currentUser, courseId);
+                    }
+                } else {
+                    modalPurchase.style.display = "flex";
+                }
             }
         });
     }
@@ -1309,4 +1321,71 @@ function cancelEditClass() {
     document.getElementById("btn-submit-class").innerHTML = `Agregar Clase <i data-lucide="plus"></i>`;
     document.getElementById("btn-cancel-edit-class").style.display = "none";
     lucide.createIcons();
+}
+
+async function handleDirectPurchase(user, courseId) {
+    const MAKE_WEBHOOK_URL = "https://hook.us2.make.com/5tlsj36tj7wyatba344jv9v1g5bpxevd";
+    const purchaseData = {
+        courseId: courseId,
+        displayName: user.displayName,
+        email: user.email || (user.username + "@costuracreativa.com"),
+        username: user.username,
+        password: user.password || "google_account_no_password"
+    };
+
+    try {
+        const modalPurchase = document.getElementById("modal-purchase");
+        document.getElementById("purchase-course-id").value = courseId;
+        document.getElementById("modal-course-title").textContent = "Procesando...";
+        modalPurchase.style.display = "flex";
+        
+        const btnPurchaseGoogle = document.getElementById("btn-purchase-google");
+        const loadingMsg = document.getElementById("purchase-loading-msg");
+        if (btnPurchaseGoogle && loadingMsg) {
+            btnPurchaseGoogle.style.display = "none";
+            loadingMsg.style.display = "block";
+            loadingMsg.querySelector("span").textContent = "Redirigiendo a la pasarela de pagos...";
+        }
+
+        if (MAKE_WEBHOOK_URL.includes("TU_WEBHOOK_ID_AQUÍ")) {
+            // Modo simulador
+            alert("⚙️ Modo Simulación Activo:\n\nComo no has configurado la URL real del Webhook de Make.com, simularemos un pago exitoso por ti. El sistema activará tu cuenta de inmediato.");
+            
+            if (!user.allowedCourses.includes(courseId)) {
+                user.allowedCourses.push(courseId);
+                await state.saveUserSingle(user);
+            }
+            
+            alert(`¡Inscripción simulada con éxito! Has sido inscrito en el curso.`);
+            modalPurchase.style.display = "none";
+            
+            state.currentUser = user;
+            sessionStorage.setItem("currentUser", JSON.stringify(user));
+            updateNavbarState();
+            switchView("portal");
+        } else {
+            const response = await fetch(MAKE_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(purchaseData)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                if (result.checkoutUrl) {
+                    window.location.href = result.checkoutUrl;
+                } else {
+                    alert("Error: Make.com no devolvió el link de pago (checkoutUrl).");
+                    modalPurchase.style.display = "none";
+                }
+            } else {
+                alert("Error del servidor de pagos de Make.com.");
+                modalPurchase.style.display = "none";
+            }
+        }
+    } catch (error) {
+        console.error("Error al procesar compra directa:", error);
+        alert("Error al procesar la inscripción: " + error.message);
+        document.getElementById("modal-purchase").style.display = "none";
+    }
 }
